@@ -1,0 +1,49 @@
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+**/appsettings.*.json
+!**/appsettings.json
+!**/appsettings.Development.json
+*.pfx
+*.p12
+secrets.json
+
+# C# / .NET
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+*.cache
+
+# Visual Studio
+.vscode/
+*.sln.docstates
+
+# Flutter / Dart
+**/.dart_tool/
+**/.packages
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/build/
+**/coverage/
+**/android/.gradle/
+**/android/local.properties
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Android
+**/android/captures/
+**/android/key.properties
+**/android/*.jks
+**/android/*.keystore
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+Desktop.ini
