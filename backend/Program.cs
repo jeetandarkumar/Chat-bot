@@ -41,6 +41,7 @@ builder.Services.Configure<OtpSettings>(builder.Configuration.GetSection(OtpSett
 // Services
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddScoped<IMessageService, MessageService>();
 
 // JWT Authentication
 var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()

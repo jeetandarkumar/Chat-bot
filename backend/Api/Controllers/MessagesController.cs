@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using ChatApp.Api.Hubs;
 using ChatApp.Application.Interfaces;
 using ChatApp.Domain.Entities;
 using ChatApp.Domain.ValueObjects;
@@ -16,10 +18,17 @@ namespace ChatApp.Api.Controllers;
 public class MessagesController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMessageService _messageService;
+    private readonly IHubContext<ChatHub> _hubContext;
 
-    public MessagesController(IUnitOfWork unitOfWork)
+    public MessagesController(
+        IUnitOfWork unitOfWork,
+        IMessageService messageService,
+        IHubContext<ChatHub> hubContext)
     {
         _unitOfWork = unitOfWork;
+        _messageService = messageService;
+        _hubContext = hubContext;
     }
 
     [HttpGet]
@@ -167,49 +176,67 @@ public class MessagesController : ControllerBase
         var userId = GetUserId();
         if (userId == Guid.Empty) return Unauthorized();
 
-        var participant = await _unitOfWork.ConversationParticipants.FirstOrDefaultAsync(
-            cp => cp.ConversationId == conversationId && cp.UserId == userId && !cp.IsDeleted);
-
-        if (participant == null)
-        {
-            return NotFound(new { message = "Conversation not found" });
-        }
-
         if (string.IsNullOrWhiteSpace(request.Content))
         {
             return BadRequest(new { message = "Message content cannot be empty" });
         }
 
-        var message = new Message(conversationId, userId, MessageContent.FromText(request.Content), request.MessageType, request.ReplyToMessageId);
+        var result = await _messageService.SendAsync(
+            conversationId,
+            userId,
+            MessageContent.FromText(request.Content),
+            request.MessageType,
+            request.ReplyToMessageId,
+            request.ClientMessageId);
 
-        await _unitOfWork.Messages.AddAsync(message);
-
-        // Update conversation's last message
-        var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
-        if (conversation != null)
+        if (result.Status == SendMessageStatus.NotParticipant)
         {
-            conversation.UpdateLastMessage(message.Id, message.SentAt);
+            return NotFound(new { message = "Conversation not found" });
         }
 
-        // Update sender's last read message
-        participant.MarkAsRead(message.SentAt);
+        if (result.Status == SendMessageStatus.InvalidContent)
+        {
+            return BadRequest(new { message = "Message content is empty or too long" });
+        }
 
-        await _unitOfWork.SaveChangesAsync();
+        if (result.Status == SendMessageStatus.InvalidReply)
+        {
+            return BadRequest(new { message = "Reply target not found in this conversation" });
+        }
 
+        var message = result.Message!;
         var sender = await _unitOfWork.Users.GetByIdAsync(userId);
+        var senderName = sender?.DisplayName ?? sender?.PhoneNumber.Value ?? "Unknown";
 
-        return CreatedAtAction(nameof(GetMessage), new { conversationId, messageId = message.Id }, new
+        var body = new
         {
             id = message.Id,
+            clientMessageId = message.ClientMessageId,
             conversationId = message.ConversationId,
             senderId = message.SenderId,
-            senderName = sender?.DisplayName ?? sender?.PhoneNumber.Value ?? "Unknown",
+            senderName,
             content = message.Content.Text,
             messageType = message.Type.ToString(),
             replyToMessageId = message.ReplyToMessageId,
             timestamp = message.CreatedAt,
             status = message.Status.ToString()
-        });
+        };
+
+        if (result.Status == SendMessageStatus.Duplicate)
+        {
+            return Ok(body);
+        }
+
+        // Push to every participant's connected devices, same as a message sent through the hub.
+        var targets = (result.RecipientIds ?? Array.Empty<Guid>())
+            .Append(userId)
+            .Select(id => $"user_{id}")
+            .ToList();
+
+        await _hubContext.Clients.Groups(targets)
+            .SendAsync("MessageReceived", ChatPayloads.MessageReceived(message, senderName));
+
+        return CreatedAtAction(nameof(GetMessage), new { conversationId, messageId = message.Id }, body);
     }
 
     [HttpPut("{messageId:guid}")]
@@ -269,19 +296,16 @@ public class MessagesController : ControllerBase
         var userId = GetUserId();
         if (userId == Guid.Empty) return Unauthorized();
 
-        var participant = await _unitOfWork.ConversationParticipants.FirstOrDefaultAsync(
-            cp => cp.ConversationId == conversationId && cp.UserId == userId && !cp.IsDeleted);
-
-        if (participant == null)
+        var changes = await _messageService.MarkReadAsync(conversationId, userId, messageId);
+        if (changes == null)
         {
-            return NotFound(new { message = "Conversation not found" });
+            return NotFound(new { message = "Conversation or message not found" });
         }
 
-        var msg = await _unitOfWork.Messages.GetByIdAsync(messageId);
-        if (msg != null)
+        foreach (var change in changes)
         {
-            participant.MarkAsRead(msg.SentAt);
-            await _unitOfWork.SaveChangesAsync();
+            await _hubContext.Clients.Group($"user_{change.SenderId}")
+                .SendAsync("MessageStatusChanged", ChatPayloads.StatusChanged(change));
         }
 
         return Ok(new { message = "Marked as read" });
@@ -303,7 +327,8 @@ public class MessagesController : ControllerBase
 public record SendMessageRequest(
     string Content,
     MessageType MessageType = MessageType.Text,
-    Guid? ReplyToMessageId = null
+    Guid? ReplyToMessageId = null,
+    Guid? ClientMessageId = null
 );
 
 public record EditMessageRequest(

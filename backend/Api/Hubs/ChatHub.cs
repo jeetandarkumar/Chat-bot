@@ -15,6 +15,7 @@ namespace ChatApp.Api.Hubs;
 public class ChatHub : Hub
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMessageService _messageService;
 
     // User ID -> connection IDs.
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>>
@@ -24,9 +25,10 @@ public class ChatHub : Hub
     private static readonly ConcurrentDictionary<string, Guid>
         _connectionUserMap = new();
 
-    public ChatHub(IUnitOfWork unitOfWork)
+    public ChatHub(IUnitOfWork unitOfWork, IMessageService messageService)
     {
         _unitOfWork = unitOfWork;
+        _messageService = messageService;
     }
 
     public override async Task OnConnectedAsync()
@@ -70,6 +72,14 @@ public class ChatHub : Hub
             await NotifyContactsOnlineStatus(userId, true);
         }
 
+        // Messages sent while this user was offline are now delivered; tell their senders.
+        var delivered = await _messageService.MarkDeliveredForUserAsync(userId);
+        foreach (var change in delivered)
+        {
+            await Clients.Group($"user_{change.SenderId}")
+                .SendAsync("MessageStatusChanged", ChatPayloads.StatusChanged(change));
+        }
+
         await base.OnConnectedAsync();
     }
 
@@ -106,73 +116,66 @@ public class ChatHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task SendMessage(
+    /// <summary>
+    /// Sends a text message. Pass a client-generated clientMessageId so a retry after a dropped
+    /// connection returns the original message instead of creating a duplicate.
+    /// </summary>
+    public async Task<SendMessageAck> SendMessage(
         Guid conversationId,
         string content,
-        Guid? replyToMessageId = null)
+        Guid? replyToMessageId = null,
+        Guid? clientMessageId = null)
     {
         var userId = GetUserIdFromContext();
 
-        if (userId == Guid.Empty || string.IsNullOrWhiteSpace(content))
+        if (userId == Guid.Empty)
         {
-            await Clients.Caller.SendAsync("Error", "Invalid message.");
-            return;
+            return SendMessageAck.Failed("Unauthorized", clientMessageId);
         }
 
-        var participant =
-            await _unitOfWork.ConversationParticipants.FirstOrDefaultAsync(
-                cp => cp.ConversationId == conversationId
-                      && cp.UserId == userId
-                      && !cp.IsDeleted);
-
-        if (participant == null)
-        {
-            await Clients.Caller.SendAsync(
-                "Error",
-                "Not a participant of this conversation.");
-            return;
-        }
-
-        var conversation =
-            await _unitOfWork.Conversations.GetByIdAsync(conversationId);
-
-        if (conversation == null)
-        {
-            await Clients.Caller.SendAsync("Error", "Conversation not found.");
-            return;
-        }
-
-        var message = new Message(
+        var result = await _messageService.SendAsync(
             conversationId,
             userId,
-            MessageContent.FromText(content),
+            MessageContent.FromText(content ?? string.Empty),
             MessageType.Text,
-            replyToMessageId);
+            replyToMessageId,
+            clientMessageId);
 
-        await _unitOfWork.Messages.AddAsync(message);
+        if (!result.IsSuccess || result.Message == null)
+        {
+            return SendMessageAck.Failed(result.Status.ToString(), clientMessageId);
+        }
 
-        conversation.UpdateLastMessage(message.Id, message.SentAt);
-        participant.MarkAsRead(message.SentAt);
+        var message = result.Message;
 
-        await _unitOfWork.SaveChangesAsync();
+        if (result.Status == SendMessageStatus.Duplicate)
+        {
+            return SendMessageAck.Ok(message, clientMessageId, isDuplicate: true);
+        }
+
+        var recipientIds = result.RecipientIds ?? Array.Empty<Guid>();
+
+        // Delivered when every recipient has a live connection (for a direct chat, the other user).
+        if (recipientIds.Count > 0 && recipientIds.All(IsUserOnline))
+        {
+            message.MarkAsDelivered();
+            await _unitOfWork.SaveChangesAsync();
+        }
 
         var sender = await _unitOfWork.Users.GetByIdAsync(userId);
+        var senderName = sender?.DisplayName ?? sender?.PhoneNumber.Value ?? "Unknown";
 
-        await Clients.Group($"conversation_{conversationId}")
-            .SendAsync("MessageReceived", new
-            {
-                id = message.Id,
-                conversationId = message.ConversationId,
-                senderId = message.SenderId,
-                senderName = sender?.DisplayName
-                    ?? sender?.PhoneNumber.Value
-                    ?? "Unknown",
-                content = message.Content.Text,
-                messageType = message.Type.ToString(),
-                replyToMessageId = message.ReplyToMessageId,
-                timestamp = message.CreatedAt,
-                status = MessageStatus.Sent.ToString()
-            });
+        // Push through each participant's personal group (joined on connect) rather than the
+        // conversation group, so a conversation created after a user connected still reaches them.
+        var targets = recipientIds
+            .Append(userId)
+            .Select(id => $"user_{id}")
+            .ToList();
+
+        await Clients.Groups(targets)
+            .SendAsync("MessageReceived", ChatPayloads.MessageReceived(message, senderName));
+
+        return SendMessageAck.Ok(message, clientMessageId, isDuplicate: false);
     }
 
     public async Task MarkAsRead(
@@ -186,25 +189,22 @@ public class ChatHub : Hub
             return;
         }
 
-        var participant =
-            await _unitOfWork.ConversationParticipants.FirstOrDefaultAsync(
-                cp => cp.ConversationId == conversationId
-                      && cp.UserId == userId
-                      && !cp.IsDeleted);
+        var changes = await _messageService.MarkReadAsync(conversationId, userId, lastReadMessageId);
 
-        if (participant == null)
+        if (changes == null)
         {
+            await Clients.Caller.SendAsync("Error", "Invalid read receipt.");
             return;
         }
 
-        var lastReadMessage = await _unitOfWork.Messages.GetByIdAsync(lastReadMessageId);
-        if (lastReadMessage != null)
+        foreach (var change in changes)
         {
-            participant.MarkAsRead(lastReadMessage.SentAt);
-            await _unitOfWork.SaveChangesAsync();
+            await Clients.Group($"user_{change.SenderId}")
+                .SendAsync("MessageStatusChanged", ChatPayloads.StatusChanged(change));
         }
 
-        await Clients.Group($"conversation_{conversationId}")
+        // Lets the reader's other devices clear their unread badge.
+        await Clients.Group($"user_{userId}")
             .SendAsync("MessagesRead", new
             {
                 conversationId,

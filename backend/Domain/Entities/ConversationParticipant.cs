@@ -57,6 +57,7 @@ public class ConversationParticipant
     public void Leave()
     {
         LeftAt = DateTime.UtcNow;
+        IsDeleted = true;
     }
 
     public bool IsActive => LeftAt == null;

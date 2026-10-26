@@ -37,6 +37,7 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.UpdatedAt).IsRequired();
         builder.Property(m => m.IsDeleted).IsRequired();
         builder.Property(m => m.ReplyToMessageId);
+        builder.Property(m => m.ClientMessageId);
 
         builder.HasOne(m => m.Conversation)
             .WithMany(c => c.Messages)
@@ -56,5 +57,10 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.HasIndex(m => new { m.ConversationId, m.SentAt });
         builder.HasIndex(m => m.SenderId);
         builder.HasIndex(m => m.Status);
+
+        // A client retrying the same send must not create a second message.
+        builder.HasIndex(m => new { m.ConversationId, m.SenderId, m.ClientMessageId })
+            .IsUnique()
+            .HasFilter("[ClientMessageId] IS NOT NULL");
     }
 }

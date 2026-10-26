@@ -18,6 +18,7 @@ public class Message
     public DateTime UpdatedAt { get; private set; }
     public bool IsDeleted { get; private set; }
     public Guid? ReplyToMessageId { get; private set; }
+    public Guid? ClientMessageId { get; private set; }
 
     // Navigation properties
     public Conversation Conversation { get; private set; } = null!;
@@ -26,7 +27,7 @@ public class Message
 
     private Message() { } // EF Core
 
-    public Message(Guid conversationId, Guid senderId, MessageContent content, MessageType type, Guid? replyToMessageId = null)
+    public Message(Guid conversationId, Guid senderId, MessageContent content, MessageType type, Guid? replyToMessageId = null, Guid? clientMessageId = null)
     {
         Id = Guid.NewGuid();
         ConversationId = conversationId;
@@ -39,6 +40,7 @@ public class Message
         UpdatedAt = DateTime.UtcNow;
         IsDeleted = false;
         ReplyToMessageId = replyToMessageId;
+        ClientMessageId = clientMessageId;
     }
 
     public void MarkAsDelivered()
@@ -55,9 +57,11 @@ public class Message
     {
         if (Status == MessageStatus.Sent || Status == MessageStatus.Delivered)
         {
+            var now = DateTime.UtcNow;
             Status = MessageStatus.Read;
-            ReadAt = DateTime.UtcNow;
-            UpdatedAt = DateTime.UtcNow;
+            DeliveredAt ??= now;
+            ReadAt = now;
+            UpdatedAt = now;
         }
     }
 

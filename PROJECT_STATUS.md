@@ -21,6 +21,18 @@
 - `backend.csproj`: removed redundant `Microsoft.AspNetCore.SignalR` reference (NU1510). Pinned `System.Security.Cryptography.Pkcs` to 10.0.13 to clear the NU1902/NU1903 advisories (NU1902/NU1903 warnings no longer appear).
 - `mobile/test/widget_test.dart`: replaced the counter test with validator unit tests.
 
+**Hub reliability changes (branch `feature/hub-reliability`, written but NOT yet built or tested):**
+- New `IMessageService` / `MessageService` holds the send, delivered-on-connect and mark-read logic. `ChatHub` and `MessagesController` both use it, so the two paths no longer diverge.
+- Duplicate prevention: `Message.ClientMessageId` plus a filtered unique index on (ConversationId, SenderId, ClientMessageId). A retry with the same id returns the original message (`IsDuplicate = true`). Needs a new EF migration.
+- Hub `SendMessage(conversationId, content, replyToMessageId, clientMessageId)` now returns a `SendMessageAck` (success, error, messageId, status, timestamp, isDuplicate). The old `Error` event is no longer sent from it.
+- Delivered status: set on send when all recipients are connected, and for all pending messages when a user connects. Senders get a `MessageStatusChanged` event `{conversationId, messageIds, status, at}`. For group chats this is approximate: per-recipient receipts are not modelled yet.
+- Read status: `MarkAsRead` validates that the message is in the conversation, marks messages up to it as Read, resets the reader's unread count, and notifies senders. A `MessagesRead` event goes to the reader's other devices.
+- Unread counts are now incremented for the other participants on every send (previously never). The increment is read-modify-write, so concurrent sends to one conversation can lose a count.
+- Real-time delivery now goes through each participant's personal `user_{id}` group instead of the `conversation_{id}` group, so a conversation created after a user connected still reaches them live. Typing events still use conversation groups.
+- `ConversationParticipant.Leave()` now sets `IsDeleted`, so users who left (or removed a contact) lose access to the conversation.
+- REST `POST /messages` accepts `clientMessageId`, uses the same service and pushes `MessageReceived` to connected participants. REST send does not mark messages Delivered.
+- Known gaps: `GET /messages` loads every message in the conversation into memory and does N+1 user lookups (paging should move into the query); no blocking; no backend test project.
+
 **Android dev setup notes:** `mobile/.env` (UTF-8, gitignored) must exist before `flutter build` because it is declared as an asset. Use the PC's LAN IP in `API_BASE_URL`. The debug manifest allows cleartext HTTP; release builds do not. Windows Firewall must allow inbound TCP 5078 on the private profile.
 
 **Still open from the review:** committed `appsettings.json` has a machine-specific connection string and a placeholder JWT secret; hub `SendMessage` has no client message ID (duplicates on retry); Delivered status is never set; `MarkAsRead` does not validate the message belongs to the conversation or update `Message.Status`; no blocking; no rate limiting on OTP endpoints.
