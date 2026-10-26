@@ -32,6 +32,9 @@ public class ChatAppDbContext : DbContext
         modelBuilder.Entity<User>().HasQueryFilter(u => !u.IsDeleted);
         modelBuilder.Entity<Conversation>().HasQueryFilter(c => !c.IsDeleted);
         modelBuilder.Entity<Message>().HasQueryFilter(m => !m.IsDeleted);
+        // Match the Conversation filter on its required dependent so participants of a deleted
+        // conversation are filtered consistently (resolves the EF Core query filter warning).
+        modelBuilder.Entity<ConversationParticipant>().HasQueryFilter(cp => !cp.Conversation.IsDeleted);
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

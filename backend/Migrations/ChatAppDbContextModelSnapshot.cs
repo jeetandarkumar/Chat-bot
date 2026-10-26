@@ -73,6 +73,9 @@ namespace backend.Migrations
                     b.Property<bool>("IsAdmin")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("IsMuted")
                         .HasColumnType("bit");
 

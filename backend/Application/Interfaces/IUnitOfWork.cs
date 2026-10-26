@@ -7,7 +7,7 @@ namespace ChatApp.Application.Interfaces;
 public interface IUnitOfWork : IDisposable
 {
     IRepository<User> Users { get; }
-    IRepository<Conversation> Conversations { get; }
+    IConversationRepository Conversations { get; }
     IRepository<Message> Messages { get; }
     IRepository<ConversationParticipant> ConversationParticipants { get; }
     IRepository<RefreshToken> RefreshTokens { get; }

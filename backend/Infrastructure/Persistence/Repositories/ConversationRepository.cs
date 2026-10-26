@@ -27,8 +27,3 @@ public class ConversationRepository : Repository<Conversation>, IConversationRep
         return conversation;
     }
 }
-
-public interface IConversationRepository : IRepository<Conversation>
-{
-    Task<Conversation?> GetConversationBetweenUsersAsync(Guid userId1, Guid userId2, CancellationToken cancellationToken = default);
-}

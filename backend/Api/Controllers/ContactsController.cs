@@ -56,7 +56,7 @@ public class ContactsController : ControllerBase
             if (user != null && !user.IsDeleted)
             {
                 // Get the conversation ID for this contact
-                var conv = await _unitOfWork.Conversations.GetConversationBetweenUsers(userId, contactId);
+                var conv = await _unitOfWork.Conversations.GetConversationBetweenUsersAsync(userId, contactId);
 
                 contacts.Add(new
                 {
@@ -136,7 +136,7 @@ public class ContactsController : ControllerBase
         }
 
         // Check if there's an existing direct conversation
-        var conversation = await _unitOfWork.Conversations.GetConversationBetweenUsers(currentUserId, userId);
+        var conversation = await _unitOfWork.Conversations.GetConversationBetweenUsersAsync(currentUserId, userId);
 
         return Ok(new
         {
@@ -172,7 +172,7 @@ public class ContactsController : ControllerBase
         }
 
         // Check if direct conversation already exists
-        var existingConversation = await _unitOfWork.Conversations.GetConversationBetweenUsers(userId, contact.Id);
+        var existingConversation = await _unitOfWork.Conversations.GetConversationBetweenUsersAsync(userId, contact.Id);
         if (existingConversation != null)
         {
             return Ok(new
@@ -213,7 +213,7 @@ public class ContactsController : ControllerBase
         var currentUserId = GetUserId();
         if (currentUserId == Guid.Empty) return Unauthorized();
 
-        var conversation = await _unitOfWork.Conversations.GetConversationBetweenUsers(currentUserId, userId);
+        var conversation = await _unitOfWork.Conversations.GetConversationBetweenUsersAsync(currentUserId, userId);
         if (conversation == null)
         {
             return NotFound(new { message = "Contact not found" });

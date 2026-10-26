@@ -5,6 +5,25 @@
 
 ---
 
+## 0. Update 2026-10-26 (build verification)
+
+**Corrections to this document.** The sections below predate some of the code. The repo already contains `ChatHub`, `ConversationsController`, `MessagesController` and `ContactsController`. They were written but never built or tested, so treat them as **unverified**, not complete. Mobile messaging and contacts screens still use mock data (no BLoC, domain or data layers).
+
+**Local build results (Windows, reported by the project owner):**
+- Before fixes: `dotnet build` failed with 4 x CS1061 in `ContactsController`; `flutter test` failed (stale counter test).
+- After fixes: `dotnet build` succeeded with 0 warnings and 0 errors. `flutter test`: 7 tests passed. `flutter analyze`: no issues.
+- `dotnet ef database update`: FAILED with `PendingModelChangesWarning`. `ConversationParticipant.IsDeleted` is mapped but missing from the `InitialCreate` migration and snapshot. Needs a new migration (`AddParticipantIsDeleted`).
+- `flutter build apk --debug`: FAILED, local environment issue. Android NDK 28.2.13676358 is not installed in the SDK and Gradle could not install it. Install it via Android Studio SDK Manager (SDK Tools > NDK (Side by side)).
+
+**Fixes made (verified by a local build, see above):**
+- Moved `IConversationRepository` into `Application/Interfaces`, exposed it as `IUnitOfWork.Conversations`, and `UnitOfWork` now creates `ConversationRepository`. `ContactsController` calls `GetConversationBetweenUsersAsync`.
+- `backend.csproj`: removed redundant `Microsoft.AspNetCore.SignalR` reference (NU1510). Pinned `System.Security.Cryptography.Pkcs` to 10.0.13 to clear the NU1902/NU1903 advisories (NU1902/NU1903 warnings no longer appear).
+- `mobile/test/widget_test.dart`: replaced the counter test with validator unit tests.
+
+**Still open from the review:** committed `appsettings.json` has a machine-specific connection string and a placeholder JWT secret; hub `SendMessage` has no client message ID (duplicates on retry); Delivered status is never set; `MarkAsRead` does not validate the message belongs to the conversation or update `Message.Status`; no blocking; no rate limiting on OTP endpoints.
+
+---
+
 ## 1. Architecture Overview
 
 ### Mobile (Flutter)

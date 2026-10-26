@@ -15,7 +15,7 @@ public class UnitOfWork : IUnitOfWork
     private bool _disposed;
 
     public IRepository<User> Users { get; }
-    public IRepository<Conversation> Conversations { get; }
+    public IConversationRepository Conversations { get; }
     public IRepository<Message> Messages { get; }
     public IRepository<ConversationParticipant> ConversationParticipants { get; }
     public IRepository<RefreshToken> RefreshTokens { get; }
@@ -25,7 +25,7 @@ public class UnitOfWork : IUnitOfWork
     {
         _context = context;
         Users = new Repository<User>(context);
-        Conversations = new Repository<Conversation>(context);
+        Conversations = new ConversationRepository(context);
         Messages = new Repository<Message>(context);
         ConversationParticipants = new Repository<ConversationParticipant>(context);
         RefreshTokens = new Repository<RefreshToken>(context);
