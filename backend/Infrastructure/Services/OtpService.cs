@@ -22,7 +22,7 @@ public class OtpService : IOtpService
     public async Task<string> GenerateOtpAsync(string phoneNumber, OtpPurpose purpose)
     {
         var expiredOtps = await _unitOfWork.OtpCodes.FindAsync(
-            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && o.IsExpired);
+            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && o.ExpiresAt <= DateTime.UtcNow);
         
         foreach (var expiredOtp in expiredOtps)
         {
@@ -30,7 +30,7 @@ public class OtpService : IOtpService
         }
 
         var recentOtp = await _unitOfWork.OtpCodes.FirstOrDefaultAsync(
-            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && !o.IsExpired && !o.IsVerified);
+            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && o.ExpiresAt > DateTime.UtcNow && o.VerifiedAt == null);
 
         if (recentOtp != null)
         {
@@ -54,7 +54,7 @@ public class OtpService : IOtpService
     public async Task<bool> VerifyOtpAsync(string phoneNumber, string code, OtpPurpose purpose)
     {
         var otp = await _unitOfWork.OtpCodes.FirstOrDefaultAsync(
-            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && !o.IsExpired && !o.IsVerified);
+            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && o.ExpiresAt > DateTime.UtcNow && o.VerifiedAt == null);
 
         if (otp == null)
             return false;
@@ -81,14 +81,14 @@ public class OtpService : IOtpService
     public async Task<bool> IsOtpValidAsync(string phoneNumber, OtpPurpose purpose)
     {
         var otp = await _unitOfWork.OtpCodes.FirstOrDefaultAsync(
-            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && !o.IsExpired && !o.IsVerified);
+            o => o.PhoneNumber == phoneNumber && o.Purpose == purpose && o.ExpiresAt > DateTime.UtcNow && o.VerifiedAt == null);
 
         return otp != null;
     }
 
     public async Task CleanupExpiredOtpsAsync()
     {
-        var expiredOtps = await _unitOfWork.OtpCodes.FindAsync(o => o.IsExpired);
+        var expiredOtps = await _unitOfWork.OtpCodes.FindAsync(o => o.ExpiresAt <= DateTime.UtcNow);
         foreach (var expiredOtp in expiredOtps)
         {
             _unitOfWork.OtpCodes.Remove(expiredOtp);

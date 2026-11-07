@@ -6,7 +6,7 @@ namespace ChatApp.Domain.ValueObjects;
 public readonly record struct PhoneNumber
 {
     private static readonly Regex PhoneRegex = new(
-        @"^\\+?[1-9]\\d{1,14}$",
+        @"^\+?[1-9]\d{1,14}$",
         RegexOptions.Compiled);
 
     public string Value { get; }
@@ -45,7 +45,7 @@ public readonly record struct PhoneNumber
 
     private static string Clean(string input)
     {
-        var cleaned = Regex.Replace(input, @"[\\s\\-()]", "");
+        var cleaned = Regex.Replace(input, @"[\s\-()]", "");
         
         if (!cleaned.StartsWith("+"))
         {

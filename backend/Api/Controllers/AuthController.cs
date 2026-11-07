@@ -42,8 +42,11 @@ public class AuthController : ControllerBase
             return BadRequest(new { message = "Phone number is required" });
         }
 
-        var phoneNumber = new PhoneNumber(request.PhoneNumber);
-        var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber.Value == phoneNumber.Value);
+        if (!PhoneNumber.TryParse(request.PhoneNumber, out var phoneNumber))
+        {
+            return BadRequest(new { message = "Invalid phone number. Use international format, e.g. +923001234567" });
+        }
+        var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber);
 
         if (user == null)
         {
@@ -84,9 +87,12 @@ public class AuthController : ControllerBase
             return BadRequest(new { message = "Phone number is required" });
         }
 
-        var phoneNumber = new PhoneNumber(request.PhoneNumber);
+        if (!PhoneNumber.TryParse(request.PhoneNumber, out var phoneNumber))
+        {
+            return BadRequest(new { message = "Invalid phone number. Use international format, e.g. +923001234567" });
+        }
         
-        var existingUser = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber.Value == phoneNumber.Value);
+        var existingUser = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber);
         if (existingUser != null)
         {
             return Conflict(new { message = "Phone number already registered" });
@@ -119,7 +125,10 @@ public class AuthController : ControllerBase
             return BadRequest(new { message = "Invalid OTP purpose" });
         }
 
-        var phoneNumber = new PhoneNumber(request.PhoneNumber);
+        if (!PhoneNumber.TryParse(request.PhoneNumber, out var phoneNumber))
+        {
+            return BadRequest(new { message = "Invalid phone number. Use international format, e.g. +923001234567" });
+        }
         var isValid = await _otpService.VerifyOtpAsync(phoneNumber.Value, request.Code, purpose);
 
         if (!isValid)
@@ -127,7 +136,7 @@ public class AuthController : ControllerBase
             return BadRequest(new { message = "Invalid or expired OTP code" });
         }
 
-        var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber.Value == phoneNumber.Value);
+        var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber);
         if (user == null)
         {
             return NotFound(new { message = "User not found" });
@@ -158,7 +167,7 @@ public class AuthController : ControllerBase
         }
 
         var refreshTokenEntity = await _unitOfWork.RefreshTokens.FirstOrDefaultAsync(
-            rt => rt.Token == request.RefreshToken && rt.IsActive);
+            rt => rt.Token == request.RefreshToken && rt.RevokedAt == null && rt.ExpiresAt > DateTime.UtcNow);
 
         if (refreshTokenEntity == null)
         {

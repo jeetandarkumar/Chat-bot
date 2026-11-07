@@ -33,6 +33,13 @@
 - REST `POST /messages` accepts `clientMessageId`, uses the same service and pushes `MessageReceived` to connected participants. REST send does not mark messages Delivered.
 - Known gaps: `GET /messages` loads every message in the conversation into memory and does N+1 user lookups (paging should move into the query); no blocking; no backend test project.
 
+**First runtime test (emulator) found and fixed (branch `fix/ef-query-translation`, not yet re-verified):**
+- `POST /api/auth/register` returned 500: EF Core could not translate `u.PhoneNumber.Value == ...` because `PhoneNumber` is a value object stored through a value converter (`.Value` is not a column). Predicates now compare `u.PhoneNumber == phoneNumber`. Same bug in login, verify-otp, and the contacts endpoints.
+- `OtpService` and the refresh-token lookup filtered on computed properties (`IsExpired`, `IsVerified`, `IsActive`), which also cannot be translated. They now use the mapped columns (`ExpiresAt`, `VerifiedAt`, `RevokedAt`).
+- `PhoneNumber` regexes had doubled backslashes in verbatim strings, so `Parse` rejected every number (and EF calls `Parse` when loading users). Fixed. Auth endpoints now validate and normalize the phone number with `PhoneNumber.TryParse` and return 400 on invalid input (previously unvalidated).
+- Contact search: phone numbers are now matched exactly (substring search across all users' numbers could not be translated and enumerates users); display names still match by substring.
+- Lesson: no query in this codebase had been run against SQL Server before. Other predicates were reviewed; the remaining ones use mapped columns only.
+
 **Android dev setup notes:** `mobile/.env` (UTF-8, gitignored) must exist before `flutter build` because it is declared as an asset. Use the PC's LAN IP in `API_BASE_URL`. The debug manifest allows cleartext HTTP; release builds do not. Windows Firewall must allow inbound TCP 5078 on the private profile.
 
 **Still open from the review:** committed `appsettings.json` has a machine-specific connection string and a placeholder JWT secret; hub `SendMessage` has no client message ID (duplicates on retry); Delivered status is never set; `MarkAsRead` does not validate the message belongs to the conversation or update `Message.Status`; no blocking; no rate limiting on OTP endpoints.

@@ -94,12 +94,18 @@ public class ContactsController : ControllerBase
             return BadRequest(new { message = "Search query must be at least 2 characters" });
         }
 
-        // Search by phone number or display name
-        var users = await _unitOfWork.Users.FindAsync(
-            u => !u.IsDeleted && 
-                 u.Id != userId && 
-                 (u.PhoneNumber.Value.Contains(query) || 
-                  (u.DisplayName != null && u.DisplayName.Contains(query))));
+        // Phone numbers are matched exactly (contact discovery, not substring enumeration of
+        // everyone's number); display names are matched by substring.
+        var users = PhoneNumber.TryParse(query, out var searchPhone)
+            ? await _unitOfWork.Users.FindAsync(
+                u => !u.IsDeleted &&
+                     u.Id != userId &&
+                     (u.PhoneNumber == searchPhone ||
+                      (u.DisplayName != null && u.DisplayName.Contains(query))))
+            : await _unitOfWork.Users.FindAsync(
+                u => !u.IsDeleted &&
+                     u.Id != userId &&
+                     u.DisplayName != null && u.DisplayName.Contains(query));
 
         var result = users
             .Skip((page - 1) * pageSize)
@@ -157,8 +163,13 @@ public class ContactsController : ControllerBase
         if (userId == Guid.Empty) return Unauthorized();
 
         // Find user by phone number
+        if (!PhoneNumber.TryParse(request.PhoneNumber, out var contactPhone))
+        {
+            return BadRequest(new { message = "Invalid phone number. Use international format, e.g. +923001234567" });
+        }
+
         var users = await _unitOfWork.Users.FindAsync(
-            u => u.PhoneNumber.Value == request.PhoneNumber && !u.IsDeleted);
+            u => u.PhoneNumber == contactPhone && !u.IsDeleted);
         
         var contact = users.FirstOrDefault();
         if (contact == null)
