@@ -54,29 +54,15 @@ public class AuthController : ControllerBase
             return NotFound(new { message = "User not found. Please register first." });
         }
 
-        if (!user.IsPhoneNumberVerified)
-        {
-            await _otpService.GenerateOtpAsync(phoneNumber.Value, OtpPurpose.Login);
-            return Ok(new
-            {
-                requiresOtp = true,
-                otpPurpose = OtpPurpose.Login.ToString(),
-                message = "OTP sent to your phone number"
-            });
-        }
-
-        var accessToken = _jwtTokenService.GenerateAccessToken(user);
-        var refreshToken = await _jwtTokenService.CreateRefreshTokenAsync(user.Id, GetClientIpAddress());
-        
-        user.AddRefreshToken(refreshToken);
-        await _unitOfWork.SaveChangesAsync();
+        // Always require an OTP. Knowing a phone number must never be enough to receive tokens;
+        // tokens are only issued by verify-otp (and refresh).
+        await _otpService.GenerateOtpAsync(phoneNumber.Value, OtpPurpose.Login);
 
         return Ok(new
         {
-            requiresOtp = false,
-            accessToken,
-            refreshToken = refreshToken.Token,
-            user = MapUserToResponse(user)
+            requiresOtp = true,
+            otpPurpose = OtpPurpose.Login.ToString(),
+            message = "OTP sent to your phone number"
         });
     }
 

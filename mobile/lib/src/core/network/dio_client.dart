@@ -1,14 +1,3 @@
-// The user wants me to apply the suggested edit to the original code and output the complete modified file. I need to carefully merge the changes while preserving all unchanged code.
-
-// Let me analyze the differences:
-
-// 1. Added import: `import 'package:logger/logger.dart';`
-// 2. Added `final Logger _logger = Logger();` field in DioClient
-// 3. Changed `_LoggingInterceptor()` to `_LoggingInterceptor(_logger)` in the interceptors list
-// 4. Modified `_LoggingInterceptor` class to accept Logger in constructor and use it instead of print
-// 5. Modified `_ConnectivityInterceptor` to use `connectivityResult.contains(ConnectivityResult.none)` instead of `connectivityResult == ConnectivityResult.none`
-
-// I'll output the complete modified file with these changes applied```
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';

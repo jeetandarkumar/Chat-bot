@@ -47,6 +47,11 @@
 - Logging: removed duplicate Console/File sinks (every line was written twice), restored the "Now listening on" startup line, and HTTPS redirection is skipped in Development (no HTTPS port exists for LAN testing).
 - Mobile: the register button should be disabled while the request is in flight (not yet checked).
 
+**Security fix found during emulator testing (branch `fix/login-requires-otp`, not yet re-verified):**
+- `POST /api/auth/login` returned access and refresh tokens immediately for any user with a verified phone number, with no OTP. Anyone who knew a registered number could log in as that user. Login now always sends a Login OTP and returns `requiresOtp = true`; tokens come only from `verify-otp` (and `refresh`). The mobile app already expected this flow (it ignored the tokens in the old response, then called `/me` with no token and got 401).
+- Removed leftover AI commentary from the top of `auth_bloc.dart` and `dio_client.dart`.
+- Still open in auth: no rate limiting on OTP requests or verification attempts per phone/IP; `login` returns 404 for unknown numbers (user enumeration); refresh-token endpoint not exercised yet; JWT validation settings not yet checked against a real token.
+
 **Android dev setup notes:** `mobile/.env` (UTF-8, gitignored) must exist before `flutter build` because it is declared as an asset. Use the PC's LAN IP in `API_BASE_URL`. The debug manifest allows cleartext HTTP; release builds do not. Windows Firewall must allow inbound TCP 5078 on the private profile.
 
 **Still open from the review:** committed `appsettings.json` has a machine-specific connection string and a placeholder JWT secret; hub `SendMessage` has no client message ID (duplicates on retry); Delivered status is never set; `MarkAsRead` does not validate the message belongs to the conversation or update `Message.Status`; no blocking; no rate limiting on OTP endpoints.

@@ -1,9 +1,3 @@
-// 1. Import for `DioClient` and `dartz`
-// 2. A new dependency `DioClient _dioClient` in the constructor
-// 3. A new event handler for `AuthInitializeRequested`
-// 4. Registration of the new event handler in the constructor
-
-// I need to output the complete modified file with these changes applied.```
 import 'package:chat_app/src/features/auth/presentation/bloc/auth_event.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
