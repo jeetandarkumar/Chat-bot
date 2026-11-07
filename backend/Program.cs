@@ -17,10 +17,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Configure Serilog
 builder.Host.UseSerilog((context, configuration) =>
     configuration
+        // Sinks (Console, File) are configured in appsettings.json under "Serilog".
         .ReadFrom.Configuration(context.Configuration)
-        .Enrich.FromLogContext()
-        .WriteTo.Console()
-        .WriteTo.File("logs/log-.txt", rollingInterval: RollingInterval.Day));
+        .Enrich.FromLogContext());
 
 // Add services to the container
 builder.Services.AddOpenApi();
@@ -107,7 +106,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseSerilogRequestLogging();
-app.UseHttpsRedirection();
+// Dev runs over plain HTTP on the LAN (physical phone / emulator), so no HTTPS port exists to redirect to.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();

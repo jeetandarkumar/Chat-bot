@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using ChatApp.Application.Interfaces;
 using ChatApp.Infrastructure.Services;
@@ -93,14 +94,40 @@ public class AuthController : ControllerBase
         }
         
         var existingUser = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber);
-        if (existingUser != null)
+        if (existingUser != null && existingUser.IsPhoneNumberVerified)
         {
             return Conflict(new { message = "Phone number already registered" });
         }
 
-        var user = new User(phoneNumber, request.DisplayName);
-        await _unitOfWork.Users.AddAsync(user);
-        await _unitOfWork.SaveChangesAsync();
+        // A user who registered earlier but never verified (lost OTP, app closed, double tap)
+        // just gets a fresh OTP instead of being stuck behind a "already registered" error.
+        if (existingUser == null)
+        {
+            var user = new User(phoneNumber, request.DisplayName);
+            await _unitOfWork.Users.AddAsync(user);
+
+            try
+            {
+                await _unitOfWork.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                // A concurrent request (e.g. a double tap while the server was warming up) created
+                // the user first. Drop our failed insert and continue with the user that won.
+                _unitOfWork.Users.Remove(user);
+
+                var concurrentUser = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber);
+                if (concurrentUser == null)
+                {
+                    throw;
+                }
+
+                if (concurrentUser.IsPhoneNumberVerified)
+                {
+                    return Conflict(new { message = "Phone number already registered" });
+                }
+            }
+        }
 
         await _otpService.GenerateOtpAsync(phoneNumber.Value, OtpPurpose.Registration);
 

@@ -40,6 +40,13 @@
 - Contact search: phone numbers are now matched exactly (substring search across all users' numbers could not be translated and enumerates users); display names still match by substring.
 - Lesson: no query in this codebase had been run against SQL Server before. Other predicates were reviewed; the remaining ones use mapped columns only.
 
+**Second runtime test (emulator): register flow (branch `fix/register-race-and-logging`, not yet re-verified):**
+- After the query fixes, `POST /api/auth/register` succeeded and printed the OTP. A second register request (a double tap while the first was still warming up, about 12 s on a cold start) then failed with a duplicate key on `IX_Users_PhoneNumber` and returned 500. Register is now idempotent: an existing unverified user gets a fresh OTP, and a lost insert race is caught and handled. Verified numbers still get 409.
+- `POST /api/auth/verify-otp` returned 400. The log did not say why. `VerifyOtpAsync` now logs the reason (no active code, or wrong code with attempt count) and accepts a match against any active code for the number/purpose.
+- OTP codes were generated with `System.Random` and always printed to the console. Now `RandomNumberGenerator`, and printed only when `Otp:Provider` is `Development`.
+- Logging: removed duplicate Console/File sinks (every line was written twice), restored the "Now listening on" startup line, and HTTPS redirection is skipped in Development (no HTTPS port exists for LAN testing).
+- Mobile: the register button should be disabled while the request is in flight (not yet checked).
+
 **Android dev setup notes:** `mobile/.env` (UTF-8, gitignored) must exist before `flutter build` because it is declared as an asset. Use the PC's LAN IP in `API_BASE_URL`. The debug manifest allows cleartext HTTP; release builds do not. Windows Firewall must allow inbound TCP 5078 on the private profile.
 
 **Still open from the review:** committed `appsettings.json` has a machine-specific connection string and a placeholder JWT secret; hub `SendMessage` has no client message ID (duplicates on retry); Delivered status is never set; `MarkAsRead` does not validate the message belongs to the conversation or update `Message.Status`; no blocking; no rate limiting on OTP endpoints.
