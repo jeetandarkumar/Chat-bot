@@ -20,22 +20,19 @@ extension AuthStatusX on AuthStatus {
 
 class AuthState extends Equatable {
   final AuthStatus status;
-  final bool isAuthenticated;
-  final bool isLoading;
-  final bool isOtpRequired;
   final User? user;
   final String? accessToken;
   final String? refreshToken;
   final String? phoneNumber;
   final OtpPurpose? otpPurpose;
+
+  /// One-shot messages for the UI. They are NOT carried over by [copyWith], so a
+  /// stale error never reappears on the next state change.
   final String? message;
   final String? errorMessage;
 
   const AuthState({
     this.status = AuthStatus.initial,
-    this.isAuthenticated = false,
-    this.isLoading = false,
-    this.isOtpRequired = false,
     this.user,
     this.accessToken,
     this.refreshToken,
@@ -45,17 +42,17 @@ class AuthState extends Equatable {
     this.errorMessage,
   });
 
-  const AuthState.initial()
-    : this(status: AuthStatus.initial);
+  const AuthState.initial() : this(status: AuthStatus.initial);
 
-  const AuthState.unauthenticated()
-    : this(status: AuthStatus.unauthenticated);
+  const AuthState.unauthenticated() : this(status: AuthStatus.unauthenticated);
+
+  // Derived from [status] so they can never get out of sync with it.
+  bool get isLoading => status == AuthStatus.loading;
+  bool get isAuthenticated => status == AuthStatus.authenticated;
+  bool get isOtpRequired => status == AuthStatus.otpRequired;
 
   AuthState copyWith({
     AuthStatus? status,
-    bool? isAuthenticated,
-    bool? isLoading,
-    bool? isOtpRequired,
     User? user,
     String? accessToken,
     String? refreshToken,
@@ -66,25 +63,19 @@ class AuthState extends Equatable {
   }) {
     return AuthState(
       status: status ?? this.status,
-      isAuthenticated: isAuthenticated ?? this.isAuthenticated,
-      isLoading: isLoading ?? this.isLoading,
-      isOtpRequired: isOtpRequired ?? this.isOtpRequired,
       user: user ?? this.user,
       accessToken: accessToken ?? this.accessToken,
       refreshToken: refreshToken ?? this.refreshToken,
       phoneNumber: phoneNumber ?? this.phoneNumber,
       otpPurpose: otpPurpose ?? this.otpPurpose,
-      message: message ?? this.message,
-      errorMessage: errorMessage ?? this.errorMessage,
+      message: message,
+      errorMessage: errorMessage,
     );
   }
 
   @override
   List<Object?> get props => [
     status,
-    isAuthenticated,
-    isLoading,
-    isOtpRequired,
     user,
     accessToken,
     refreshToken,

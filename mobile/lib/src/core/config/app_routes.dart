@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:chat_app/src/features/auth/presentation/pages/login_page.dart';
+import 'package:chat_app/src/features/auth/presentation/pages/splash_page.dart';
 import 'package:chat_app/src/features/auth/presentation/pages/register_page.dart';
 import 'package:chat_app/src/features/auth/presentation/pages/otp_verification_page.dart';
 import 'package:chat_app/src/features/home/presentation/pages/home_page.dart';
@@ -9,6 +10,7 @@ import 'package:chat_app/src/features/contacts/presentation/pages/contacts_page.
 import 'package:chat_app/src/features/settings/presentation/pages/settings_page.dart';
 
 class AppRoutes {
+  static const String splash = '/splash';
   static const String login = '/login';
   static const String register = '/register';
   static const String otpVerification = '/otp-verification';
@@ -18,6 +20,7 @@ class AppRoutes {
   static const String settings = '/settings';
 
   static Map<String, WidgetBuilder> get routes => {
+        splash: (context) => const SplashPage(),
         login: (context) => const LoginPage(),
         register: (context) => const RegisterPage(),
         otpVerification: (context) => const OtpVerificationPage(),

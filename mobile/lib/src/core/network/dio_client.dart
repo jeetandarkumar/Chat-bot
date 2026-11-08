@@ -4,12 +4,22 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:logger/logger.dart';
 import '../config/app_config.dart';
 
+const List<String> _publicPaths = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/verify-otp',
+  '/api/auth/refresh',
+];
+
+bool _isPublicPath(String path) => _publicPaths.any((p) => path.contains(p));
+
 class DioClient {
   static final DioClient _instance = DioClient._internal();
   factory DioClient() => _instance;
   DioClient._internal();
 
   late final Dio _dio;
+  bool _initialized = false;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   final Connectivity _connectivity = Connectivity();
   final Logger _logger = Logger();
@@ -17,6 +27,9 @@ class DioClient {
   Dio get dio => _dio;
 
   void init() {
+    if (_initialized) return;
+    _initialized = true;
+
     _dio = Dio(BaseOptions(
       baseUrl: AppConfig.baseUrl,
       connectTimeout: Duration(milliseconds: AppConfig.connectTimeout),
@@ -29,10 +42,9 @@ class DioClient {
     ));
 
     _dio.interceptors.addAll([
-      _AuthInterceptor(_storage),
+      _AuthInterceptor(_storage, _dio),
       _LoggingInterceptor(_logger),
       _ConnectivityInterceptor(_connectivity),
-      _ErrorInterceptor(),
     ]);
   }
 
@@ -63,21 +75,18 @@ class DioClient {
   }
 }
 
+/// Adds the bearer token to requests and, when the server answers 401 (the access token
+/// only lives 15 minutes), refreshes the tokens once and retries the original request.
 class _AuthInterceptor extends Interceptor {
   final FlutterSecureStorage _storage;
+  final Dio _dio;
+  Future<bool>? _refreshInFlight;
 
-  _AuthInterceptor(this._storage);
+  _AuthInterceptor(this._storage, this._dio);
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
-    final publicPaths = [
-      '/api/auth/login',
-      '/api/auth/register',
-      '/api/auth/verify-otp',
-      '/api/auth/refresh',
-    ];
-
-    if (publicPaths.any((path) => options.path.contains(path))) {
+    if (_isPublicPath(options.path)) {
       return handler.next(options);
     }
 
@@ -86,6 +95,73 @@ class _AuthInterceptor extends Interceptor {
       options.headers['Authorization'] = 'Bearer $token';
     }
     handler.next(options);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final options = err.requestOptions;
+    final isUnauthorized = err.response?.statusCode == 401;
+
+    if (!isUnauthorized || _isPublicPath(options.path) || options.extra['authRetried'] == true) {
+      return handler.next(err);
+    }
+
+    // Several requests can fail at once; they all wait for the same refresh.
+    final refreshed = await (_refreshInFlight ??= _refreshTokens().whenComplete(() {
+      _refreshInFlight = null;
+    }));
+
+    if (!refreshed) {
+      return handler.next(err);
+    }
+
+    try {
+      final token = await _storage.read(key: 'access_token');
+      options.headers['Authorization'] = 'Bearer $token';
+      options.extra['authRetried'] = true;
+      final response = await _dio.fetch<dynamic>(options);
+      handler.resolve(response);
+    } on DioException catch (e) {
+      handler.next(e);
+    }
+  }
+
+  Future<bool> _refreshTokens() async {
+    final refreshToken = await _storage.read(key: 'refresh_token');
+    if (refreshToken == null || refreshToken.isEmpty) {
+      return false;
+    }
+
+    try {
+      // A bare Dio without interceptors, so a failing refresh cannot trigger another refresh.
+      final plainDio = Dio(BaseOptions(
+        baseUrl: _dio.options.baseUrl,
+        connectTimeout: _dio.options.connectTimeout,
+        receiveTimeout: _dio.options.receiveTimeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ));
+
+      final response = await plainDio.post<dynamic>(
+        '/api/auth/refresh',
+        data: {'refreshToken': refreshToken},
+      );
+
+      final data = response.data;
+      if (data is! Map<String, dynamic>) return false;
+
+      final newAccessToken = data['accessToken'];
+      final newRefreshToken = data['refreshToken'];
+      if (newAccessToken is! String || newRefreshToken is! String) return false;
+
+      await _storage.write(key: 'access_token', value: newAccessToken);
+      await _storage.write(key: 'refresh_token', value: newRefreshToken);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }
 
@@ -97,9 +173,6 @@ class _LoggingInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     _logger.d('[DIO REQUEST] ${options.method} ${options.uri}');
-    if (options.data != null) {
-      _logger.d('[DIO REQUEST DATA] ${options.data}');
-    }
     handler.next(options);
   }
 
@@ -132,15 +205,5 @@ class _ConnectivityInterceptor extends Interceptor {
       ));
     }
     handler.next(options);
-  }
-}
-
-class _ErrorInterceptor extends Interceptor {
-  @override
-  void onError(DioException err, ErrorInterceptorHandler handler) {
-    if (err.response?.statusCode == 401) {
-      // Token expired - could trigger refresh
-    }
-    handler.next(err);
   }
 }

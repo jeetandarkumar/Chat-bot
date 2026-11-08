@@ -7,7 +7,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:chat_app/src/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:chat_app/src/shared/widgets/custom_button.dart';
 import 'package:chat_app/src/core/theme/app_theme.dart';
-import 'package:chat_app/src/core/config/app_routes.dart';
 
 class OtpVerificationPage extends StatefulWidget {
   const OtpVerificationPage({super.key});
@@ -58,6 +57,13 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
 
   String get _otpCode => _controllers.map((c) => c.text).join();
 
+  void _clearCode() {
+    for (final controller in _controllers) {
+      controller.clear();
+    }
+    _focusNodes[0].requestFocus();
+  }
+
   void _onOtpChanged(int index, String value) {
     if (value.length == 1 && index < 5) {
       _focusNodes[index + 1].requestFocus();
@@ -67,6 +73,7 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
     
     if (_otpCode.length == 6) {
       final authState = context.read<AuthBloc>().state;
+      if (authState.isLoading) return;
       context.read<AuthBloc>().add(
         AuthOtpVerificationRequested(
           phoneNumber: authState.phoneNumber ?? '',
@@ -82,13 +89,14 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
     return Scaffold(
       body: SafeArea(
         child: BlocListener<AuthBloc, AuthState>(
+          // Moving on to the home screen after a successful verification is handled by the
+          // auth listener in main.dart.
           listener: (context, state) {
-            if (state.isAuthenticated) {
-              Navigator.pushNamedAndRemoveUntil(context, AppRoutes.home, (route) => false);
-            } else if (state.errorMessage != null) {
+            if (state.errorMessage != null) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(state.errorMessage!)),
               );
+              _clearCode();
             }
           },
           child: SingleChildScrollView(

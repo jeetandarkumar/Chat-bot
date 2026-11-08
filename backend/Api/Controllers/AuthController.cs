@@ -213,8 +213,7 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Logout([FromBody] LogoutRequest? request = null)
     {
-        var userIdClaim = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
-        if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
+        if (!TryGetUserId(out var userId))
         {
             return Unauthorized();
         }
@@ -238,8 +237,7 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<IActionResult> GetCurrentUser()
     {
-        var userIdClaim = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
-        if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
+        if (!TryGetUserId(out var userId))
         {
             return Unauthorized();
         }
@@ -251,6 +249,16 @@ public class AuthController : ControllerBase
         }
 
         return Ok(MapUserToResponse(user));
+    }
+
+    // ASP.NET Core's JWT handler maps the "sub" claim to ClaimTypes.NameIdentifier by default,
+    // so look for both (the other controllers and the hub do the same).
+    private bool TryGetUserId(out Guid userId)
+    {
+        var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub");
+
+        return Guid.TryParse(claim?.Value, out userId);
     }
 
     private string GetClientIpAddress()
@@ -266,10 +274,14 @@ public class AuthController : ControllerBase
             phoneNumber = user.PhoneNumber.Value,
             displayName = user.DisplayName,
             profilePictureUrl = user.ProfilePictureUrl,
+            bio = (string?)null,
+            isOnline = user.Status == UserStatus.Online,
+            lastSeen = user.LastSeenAt,
+            lastSeenAt = user.LastSeenAt,
             isPhoneNumberVerified = user.IsPhoneNumberVerified,
             status = user.Status.ToString(),
-            lastSeenAt = user.LastSeenAt,
-            createdAt = user.CreatedAt
+            createdAt = user.CreatedAt,
+            updatedAt = user.UpdatedAt
         };
     }
 }

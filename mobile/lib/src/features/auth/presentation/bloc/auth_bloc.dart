@@ -1,14 +1,15 @@
-import 'package:chat_app/src/features/auth/presentation/bloc/auth_event.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:equatable/equatable.dart';
+import 'package:chat_app/src/core/errors/exceptions.dart';
+import 'package:chat_app/src/core/network/dio_client.dart';
+import 'package:chat_app/src/features/auth/domain/entities/user.dart';
+import 'package:chat_app/src/features/auth/domain/repositories/auth_repository.dart';
+import 'package:chat_app/src/features/auth/domain/usecases/get_current_user_usecase.dart';
 import 'package:chat_app/src/features/auth/domain/usecases/login_usecase.dart';
+import 'package:chat_app/src/features/auth/domain/usecases/logout_usecase.dart';
 import 'package:chat_app/src/features/auth/domain/usecases/register_usecase.dart';
 import 'package:chat_app/src/features/auth/domain/usecases/verify_otp_usecase.dart';
-import 'package:chat_app/src/features/auth/domain/usecases/logout_usecase.dart';
-import 'package:chat_app/src/features/auth/domain/usecases/get_current_user_usecase.dart';
-import 'package:chat_app/src/features/auth/domain/repositories/auth_repository.dart';
-import 'package:chat_app/src/features/auth/domain/entities/user.dart';
-import 'package:chat_app/src/core/network/dio_client.dart';
+import 'package:chat_app/src/features/auth/presentation/bloc/auth_event.dart';
+import 'package:equatable/equatable.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 part 'auth_state.dart';
 
@@ -38,45 +39,57 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<AuthInitializeRequested>(_onInitializeRequested);
   }
 
+  /// Runs once at app start: restores the session from the stored token, if any.
   Future<void> _onInitializeRequested(
     AuthInitializeRequested event,
     Emitter<AuthState> emit,
   ) async {
     final hasToken = await _dioClient.hasValidToken();
-    if (hasToken) {
-      final accessToken = await _dioClient.getAuthToken();
-      final refreshToken = await _dioClient.getRefreshToken();
-
-      if (accessToken != null && refreshToken != null) {
-        // Try to get current user with stored token
-    final result = await _getCurrentUserUseCase();
-    result.fold(
-          (error) async {
-            // Token might be expired, try to refresh
-            // We'll implement refresh token logic here
-            emit(const AuthState.unauthenticated());
-          },
-      (user) => emit(state.copyWith(
-        status: AuthStatus.authenticated,
-        isAuthenticated: true,
-        user: user,
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-      )),
-    );
-    } else {
+    if (!hasToken) {
       emit(const AuthState.unauthenticated());
+      return;
     }
-    } else {
+
+    // An expired access token is refreshed transparently by DioClient before this returns.
+    final result = await _getCurrentUserUseCase();
+
+    AppException? failure;
+    User? currentUser;
+    result.fold<void>(
+      (error) {
+        failure = error;
+      },
+      (user) {
+        currentUser = user;
+      },
+    );
+
+    final restoredUser = currentUser;
+    if (restoredUser == null) {
+      // Only discard the tokens when the server rejected them. If we are just offline,
+      // keep them so the next start can still restore the session.
+      if (failure is AuthenticationException) {
+        await _dioClient.clearTokens();
+      }
       emit(const AuthState.unauthenticated());
+      return;
+    }
+
+    emit(AuthState(
+      status: AuthStatus.authenticated,
+      user: restoredUser,
+      accessToken: await _dioClient.getAuthToken(),
+      refreshToken: await _dioClient.getRefreshToken(),
+    ));
   }
-}
 
   Future<void> _onLoginRequested(
     AuthLoginRequested event,
     Emitter<AuthState> emit,
   ) async {
+    if (state.isLoading) return;
     emit(state.copyWith(status: AuthStatus.loading));
+
     final result = await _loginUseCase(event.phoneNumber);
     result.fold(
       (error) => emit(state.copyWith(
@@ -87,17 +100,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         if (authResult.requiresOtp) {
           emit(state.copyWith(
             status: AuthStatus.otpRequired,
-            isOtpRequired: true,
             phoneNumber: event.phoneNumber,
             otpPurpose: authResult.otpPurpose,
             message: authResult.message,
           ));
         } else {
+          // The server never issues tokens from login; an OTP is always required.
           emit(state.copyWith(
-            status: AuthStatus.authenticated,
-            message: authResult.message,
+            status: AuthStatus.unauthenticated,
+            errorMessage: 'Unexpected response from server. Please try again.',
           ));
-          add(const AuthGetCurrentUserRequested());
         }
       },
     );
@@ -107,7 +119,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     AuthRegisterRequested event,
     Emitter<AuthState> emit,
   ) async {
+    if (state.isLoading) return;
     emit(state.copyWith(status: AuthStatus.loading));
+
     final result = await _registerUseCase(event.phoneNumber, event.displayName);
     result.fold(
       (error) => emit(state.copyWith(
@@ -118,17 +132,15 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         if (authResult.requiresOtp) {
           emit(state.copyWith(
             status: AuthStatus.otpRequired,
-            isOtpRequired: true,
             phoneNumber: event.phoneNumber,
             otpPurpose: authResult.otpPurpose,
             message: authResult.message,
           ));
         } else {
           emit(state.copyWith(
-            status: AuthStatus.authenticated,
-            message: authResult.message,
+            status: AuthStatus.unauthenticated,
+            errorMessage: 'Unexpected response from server. Please try again.',
           ));
-          add(const AuthGetCurrentUserRequested());
         }
       },
     );
@@ -138,18 +150,17 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     AuthOtpVerificationRequested event,
     Emitter<AuthState> emit,
   ) async {
-    emit(state.copyWith(status: AuthStatus.loading, isLoading: true));
+    if (state.isLoading) return;
+    emit(state.copyWith(status: AuthStatus.loading));
+
     final result = await _verifyOtpUseCase(event.phoneNumber, event.code, event.purpose);
     result.fold(
       (error) => emit(state.copyWith(
         status: AuthStatus.otpRequired,
-        isLoading: false,
         errorMessage: error.message,
       )),
-      (authTokens) => emit(state.copyWith(
+      (authTokens) => emit(AuthState(
         status: AuthStatus.authenticated,
-        isAuthenticated: true,
-        isLoading: false,
         user: authTokens.user,
         accessToken: authTokens.accessToken,
         refreshToken: authTokens.refreshToken,
@@ -162,15 +173,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     AuthLogoutRequested event,
     Emitter<AuthState> emit,
   ) async {
-    emit(state.copyWith(status: AuthStatus.loading));
-    final result = await _logoutUseCase();
-    result.fold(
-      (error) => emit(state.copyWith(
-        status: AuthStatus.authenticated,
-        errorMessage: error.message,
-      )),
-      (_) => emit(const AuthState.unauthenticated()),
-    );
+    // Logging out always succeeds locally (tokens are cleared even if the server is unreachable).
+    await _logoutUseCase();
+    emit(const AuthState.unauthenticated());
   }
 
   Future<void> _onGetCurrentUserRequested(
@@ -185,7 +190,6 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       )),
       (user) => emit(state.copyWith(
         status: AuthStatus.authenticated,
-        isAuthenticated: true,
         user: user,
       )),
     );
@@ -195,16 +199,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     AuthOtpResendRequested event,
     Emitter<AuthState> emit,
   ) async {
-    if (state.phoneNumber == null || state.otpPurpose == null) return;
+    if (state.isLoading) return;
+    final phone = state.phoneNumber;
+    final purpose = state.otpPurpose;
+    if (phone == null || purpose == null) return;
 
     emit(state.copyWith(status: AuthStatus.loading));
-    final result = switch (state.otpPurpose!) {
-      OtpPurpose.registration => await _registerUseCase(
-          state.phoneNumber!,
-          null,
-        ),
-      OtpPurpose.login => await _loginUseCase(state.phoneNumber!),
-      OtpPurpose.phoneNumberChange => await _loginUseCase(state.phoneNumber!),
+    final result = switch (purpose) {
+      OtpPurpose.registration => await _registerUseCase(phone, null),
+      OtpPurpose.login => await _loginUseCase(phone),
+      OtpPurpose.phoneNumberChange => await _loginUseCase(phone),
     };
 
     result.fold(

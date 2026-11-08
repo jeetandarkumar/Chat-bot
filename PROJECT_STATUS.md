@@ -52,6 +52,19 @@
 - Removed leftover AI commentary from the top of `auth_bloc.dart` and `dio_client.dart`.
 - Still open in auth: no rate limiting on OTP requests or verification attempts per phone/IP; `login` returns 404 for unknown numbers (user enumeration); refresh-token endpoint not exercised yet; JWT validation settings not yet checked against a real token.
 
+**Login to dashboard end-to-end scan (branch `fix/auth-flow-end-to-end`, not yet re-verified on a device):**
+Symptom: after `verify-otp` returned 200 the OTP screen spun forever. Root causes found and fixed together:
+- Contract mismatch: the backend user JSON had no `updatedAt`, but `UserModel` requires it. `UserModel.fromJson` threw a `TypeError` inside the datasource, which only caught `DioException`, so the bloc stayed in `loading` for good. Backend now sends `updatedAt`, `lastSeen`, `isOnline`, `bio`. Every datasource method now has a catch-all and returns an error instead of hanging; tokens are saved only after the response parsed.
+- `AuthController` (`/me`, `/logout`) read the user id with `FindFirst("sub")` only. ASP.NET maps `sub` to `NameIdentifier`, so valid tokens got 401. Now checks both, like the other controllers and the hub.
+- Access tokens live 15 minutes and the app had no refresh logic. `DioClient` now refreshes on 401 (one shared refresh for concurrent requests) and retries the request once.
+- `main.dart` read `AuthBloc` from a context above its provider, so session restore never ran. The bloc now starts `AuthInitializeRequested` when created, a splash page covers the restore, and a single listener in `MaterialApp.builder` moves the user to home or login (also fixes logout, which did nothing visible).
+- `AuthState` flags (`isLoading`, `isAuthenticated`, `isOtpRequired`) were stored separately from `status` and went stale: login/register never showed a loading state (cause of the double register call), and a wrong OTP or resend pushed extra OTP screens. They are now derived from `status`; `message` and `errorMessage` are one-shot and no longer repeat.
+- Error parsing assumed a JSON body with `message`; a 401 with an empty body or an HTML 500 would have thrown inside the error handler. Now handled.
+- Logout now sends the refresh token so the server revokes it, and always clears local tokens.
+- Timestamps: SQL Server dates came back with `Kind=Unspecified`, so JSON had no `Z` and clients read UTC as local time. A value converter now marks all `DateTime` values as UTC. No schema change is expected.
+- Added tests: `UserModel.fromJson` against the backend payload shape, and `AuthState` behaviour.
+- Debug request logging no longer prints request bodies (they contained OTP codes).
+
 **Android dev setup notes:** `mobile/.env` (UTF-8, gitignored) must exist before `flutter build` because it is declared as an asset. Use the PC's LAN IP in `API_BASE_URL`. The debug manifest allows cleartext HTTP; release builds do not. Windows Firewall must allow inbound TCP 5078 on the private profile.
 
 **Still open from the review:** committed `appsettings.json` has a machine-specific connection string and a placeholder JWT secret; hub `SendMessage` has no client message ID (duplicates on retry); Delivered status is never set; `MarkAsRead` does not validate the message belongs to the conversation or update `Message.Status`; no blocking; no rate limiting on OTP endpoints.

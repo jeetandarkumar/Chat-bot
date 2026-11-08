@@ -32,10 +32,12 @@ class _RegisterPageState extends State<RegisterPage> {
       body: SafeArea(
         child: BlocListener<AuthBloc, AuthState>(
           listener: (context, state) {
+            // Only react while this page is the visible one; otherwise an OTP error or a
+            // resend would stack another OTP screen on top of the current one.
+            if (!(ModalRoute.of(context)?.isCurrent ?? false)) return;
+
             if (state.isOtpRequired) {
               Navigator.pushNamed(context, AppRoutes.otpVerification);
-            } else if (state.isAuthenticated) {
-              Navigator.pushNamedAndRemoveUntil(context, AppRoutes.home, (route) => false);
             } else if (state.errorMessage != null) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(state.errorMessage!)),

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ChatApp.Domain.Entities;
 using ChatApp.Infrastructure.Persistence.Configurations;
+using ChatApp.Infrastructure.Persistence.Converters;
 
 namespace ChatApp.Infrastructure.Persistence;
 
@@ -16,6 +17,14 @@ public class ChatAppDbContext : DbContext
     public DbSet<ConversationParticipant> ConversationParticipants => Set<ConversationParticipant>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

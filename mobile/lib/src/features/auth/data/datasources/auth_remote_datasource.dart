@@ -25,9 +25,11 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
       final response = await _dioClient.dio.post('/api/auth/login', data: {
         'phoneNumber': phoneNumber,
       });
-      return Right(_parseAuthResult(response.data));
+      return Right(_parseAuthResult(response.data as Map<String, dynamic>));
     } on DioException catch (e) {
       return Left(_handleError(e));
+    } catch (_) {
+      return Left(_unexpectedResponse());
     }
   }
 
@@ -38,9 +40,11 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
         'phoneNumber': phoneNumber,
         'displayName': displayName,
       });
-      return Right(_parseAuthResult(response.data));
+      return Right(_parseAuthResult(response.data as Map<String, dynamic>));
     } on DioException catch (e) {
       return Left(_handleError(e));
+    } catch (_) {
+      return Left(_unexpectedResponse());
     }
   }
 
@@ -53,14 +57,15 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
         'purpose': purpose.name,
       });
 
-      final data = response.data;
+      // Parse everything first so a malformed response never leaves half-saved tokens behind.
+      final data = response.data as Map<String, dynamic>;
       final accessToken = data['accessToken'] as String;
       final refreshToken = data['refreshToken'] as String;
+      final userModel = UserModel.fromJson(data['user'] as Map<String, dynamic>);
 
       await _dioClient.setAuthToken(accessToken);
       await _dioClient.setRefreshToken(refreshToken);
 
-      final userModel = UserModel.fromJson(data['user'] as Map<String, dynamic>);
       return Right(AuthTokens(
         accessToken: accessToken,
         refreshToken: refreshToken,
@@ -68,6 +73,8 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
       ));
     } on DioException catch (e) {
       return Left(_handleError(e));
+    } catch (_) {
+      return Left(_unexpectedResponse());
     }
   }
 
@@ -78,18 +85,24 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
       return Right(UserModel.fromJson(response.data as Map<String, dynamic>));
     } on DioException catch (e) {
       return Left(_handleError(e));
+    } catch (_) {
+      return Left(_unexpectedResponse());
     }
   }
 
   @override
   Future<Either<AppException, void>> logout() async {
     try {
-      await _dioClient.dio.post('/api/auth/logout');
-      await _dioClient.clearTokens();
-      return const Right(null);
-    } on DioException catch (e) {
-      return Left(_handleError(e));
+      final refreshToken = await _dioClient.getRefreshToken();
+      await _dioClient.dio.post('/api/auth/logout', data: {
+        'refreshToken': refreshToken,
+      });
+    } catch (_) {
+      // Logging out locally must always work, even if the server is unreachable
+      // or the session has already expired.
     }
+    await _dioClient.clearTokens();
+    return const Right(null);
   }
 
   @override
@@ -104,14 +117,14 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
         'refreshToken': refreshToken,
       });
 
-      final data = response.data;
+      final data = response.data as Map<String, dynamic>;
       final newAccessToken = data['accessToken'] as String;
       final newRefreshToken = data['refreshToken'] as String;
+      final userModel = UserModel.fromJson(data['user'] as Map<String, dynamic>);
 
       await _dioClient.setAuthToken(newAccessToken);
       await _dioClient.setRefreshToken(newRefreshToken);
 
-      final userModel = UserModel.fromJson(data['user'] as Map<String, dynamic>);
       return Right(AuthTokens(
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
@@ -119,6 +132,8 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
       ));
     } on DioException catch (e) {
       return Left(_handleError(e));
+    } catch (_) {
+      return Left(_unexpectedResponse());
     }
   }
 
@@ -127,7 +142,7 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
     if (requiresOtp) {
       return AuthResult.requiresOtp(
         purpose: OtpPurpose.values.firstWhere(
-          (e) => e.name == data['otpPurpose'],
+          (e) => e.name.toLowerCase() == (data['otpPurpose'] as String?)?.toLowerCase(),
           orElse: () => OtpPurpose.login,
         ),
         message: data['message'] as String?,
@@ -136,32 +151,52 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
     return AuthResult.success(data['message'] as String? ?? 'Success');
   }
 
+  AppException _unexpectedResponse() {
+    return const UnknownException('Unexpected response from server. Please try again.');
+  }
+
+  /// The error body is not always JSON with a "message": a 401 from the JWT middleware has
+  /// an empty body and a development 500 is an HTML page. Never assume its shape.
+  String _extractMessage(DioException e, String fallback) {
+    final data = e.response?.data;
+    if (data is Map) {
+      final message = data['message'] ?? data['title'];
+      if (message is String && message.isNotEmpty) {
+        return message;
+      }
+    }
+    return fallback;
+  }
+
   AppException _handleError(DioException e) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
-        return const NetworkException('Connection timeout');
+        return const NetworkException('Connection timeout. Please try again.');
       case DioExceptionType.connectionError:
-        return const NetworkException('No internet connection');
+        return const NetworkException('Cannot reach the server. Check your connection.');
       case DioExceptionType.badResponse:
         final statusCode = e.response?.statusCode;
-        final message = e.response?.data?['message'] as String? ?? 'Unknown error';
         switch (statusCode) {
           case 400:
-            return ValidationException(message);
+            return ValidationException(_extractMessage(e, 'Invalid request'));
           case 401:
-            return AuthenticationException(message);
+            return AuthenticationException(_extractMessage(e, 'Session expired. Please log in again.'));
           case 403:
-            return AuthorizationException(message);
+            return AuthorizationException(_extractMessage(e, 'You are not allowed to do that'));
           case 404:
-            return NotFoundException(message);
+            return NotFoundException(_extractMessage(e, 'Not found'));
           case 409:
-            return ConflictException(message);
-          case 500:
-            return ServerException(message);
+            return ConflictException(_extractMessage(e, 'Conflict'));
           default:
-            return UnknownException(message, code: statusCode.toString());
+            if (statusCode != null && statusCode >= 500) {
+              return ServerException(_extractMessage(e, 'Server error. Please try again later.'));
+            }
+            return UnknownException(
+              _extractMessage(e, 'Unexpected error'),
+              code: statusCode?.toString(),
+            );
         }
       default:
         return UnknownException(e.message ?? 'Unknown error');
